@@ -42,8 +42,7 @@ Four branches, `{NAME}/{FEATURE}-{merge,proto,reconcile,candidate}`:
   its diff against merge is always exactly the leftover not-yet-extracted work.
 - **`-candidate`** — constantly-reset scratch branch. Lazily created; always sits
   directly on `-merge` holding one commit: the unit you are about to land. You
-  build-verify it (in an isolated worktree) and review it as a diff, then promote
-  by fast-forwarding `-merge` to it — what you verified is byte-for-byte what
+  build-verify it (by checking it out) and review it as a diff, then promote
   lands (no patch re-application). Never checked out by the scripts; it exists as
   a review surface (Hunk diff) and promote source.
 
@@ -242,7 +241,7 @@ through the candidate flow (set → build-verify B2.5 → promote, skipping revi
 git diff {NAME}/{FEATURE}-merge..{NAME}/{FEATURE}-reconcile -- path/to/unit/* \
   > /tmp/candidate.patch
 bun $SCRIPTS/candidate.ts set --patch /tmp/candidate.patch --message "<unit>"
-# build-verify the candidate in an isolated worktree (B2.5), then:
+# build-verify the candidate by checking it out (B2.5), then:
 bun $SCRIPTS/candidate.ts promote
 ```
 
@@ -296,13 +295,14 @@ The candidate is **always patch-derived, never hand-edited** — see Key Princip
 #### B2.5. Build-close the candidate BEFORE review (mandatory)
 
 A candidate is only worth reviewing if it compiles and tests pass on top of
-`-merge`. Verify in an isolated worktree (HEAD/working tree untouched):
+`-merge`. Build and test the candidate branch however you prefer — the skill does
+not spawn worktrees.
 
 ```bash
-WT=/tmp/xr-{NAME}-{FEATURE}-candidate    # any throwaway path
-git worktree add "$WT" {NAME}/{FEATURE}-candidate
-( cd "$WT" && <project build + test, e.g. cargo test -p <crate>> )
-git worktree remove "$WT"
+# Example: build and test the candidate
+cd <your-project> && git checkout {NAME}/{FEATURE}-candidate
+<build + test command, e.g. cargo test -p <crate>>
+git checkout {NAME}/{FEATURE}-reconcile   # return to working branch
 ```
 
 A subset that builds in `-reconcile` (where the whole feature is present) often
@@ -475,19 +475,18 @@ Build verification happens in B2.5, *before* review — the whole point of the
 candidate branch. By promote time, `-merge`'s tree is identical to the candidate
 you already built and tested, so there is nothing new to compile.
 
-Phase 5 is a final cheap-insurance build of `-merge`'s tip in an isolated
-worktree. Since promote is byte-identical, it cannot fail in practice — if it
-does, you skipped or mis-ran B2.5:
+Phase 5 is a final cheap-insurance build of `-merge`'s tip. Since promote is
+byte-identical, it cannot fail in practice — if it does, you skipped or mis-ran
+B2.5:
 
 ```bash
-WT=/tmp/xr-{NAME}-{FEATURE}-merge
-git worktree add "$WT" {NAME}/{FEATURE}-merge
-( cd "$WT" && <project build + test, e.g. cargo test -p <crate>> )
-git worktree remove "$WT"
+cd <your-project> && git checkout {NAME}/{FEATURE}-merge
+<build + test command>
+git checkout {NAME}/{FEATURE}-reconcile   # return to working branch
 ```
 
 If it fails, undo and redo the cycle (you must check out `-merge` first; this
-command deliberately mutates HEAD/worktree):
+command deliberately mutates HEAD):
 
 ```bash
 git reset --hard HEAD^   # on -merge, only if confirmation fails
@@ -790,10 +789,9 @@ it on `-reconcile` or hand-assemble an additive-only patch first (Failure Mode 1
 (`commit-tree`, `update-ref`, `write-tree` against a temp index). It never runs
 `git checkout/merge/reset --hard`; your HEAD and working tree are untouched.
 `-reconcile` is the working branch you edit and check out; `-candidate` and
-`-proto` are review/journal artifacts queried (Hunk diff, log, worktree
-extraction) but never inhabited. Build-verify candidates in an isolated `git
-worktree add` (B2.5). If the script detects HEAD on the branch it is about to
-update, it refuses with a hard error pointing back to `-reconcile`.
+`-proto` are review/journal artifacts queried (Hunk diff, log) but never
+inhabited. Build-verify candidates by checking them out and running your build
+command (B2.5). If the script detects HEAD on the branch it is about to
 
 ## Success Criteria
 
@@ -836,8 +834,8 @@ bun $SCRIPTS/squash.ts
 # user + agent identify "add Money type" as the first unit
 git diff alice/payments-merge..alice/payments-reconcile -- src/money.rs > /tmp/candidate.patch
 bun $SCRIPTS/candidate.ts set --patch /tmp/candidate.patch --message "Money newtype"
-git worktree add /tmp/xr-cand alice/payments-candidate && \
-  ( cd /tmp/xr-cand && cargo test ) && git worktree remove /tmp/xr-cand   # B2.5
+git checkout alice/payments-candidate && cargo test   # B2.5
+git checkout alice/payments-reconcile                # back to work branch
 bun $SCRIPTS/candidate.ts review          # prints the Hunk reload cmd; user reviews
 # ... user approves ...
 bun $SCRIPTS/candidate.ts promote         # fast-forward merge to the verified candidate

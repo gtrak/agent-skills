@@ -7,11 +7,10 @@
 //
 // The candidate branch is a constantly-reset scratch branch that always sits
 // directly on top of {feature}-merge. It holds exactly one commit: the unit
-// you intend to extract this cycle. You build-verify the candidate in an
-// isolated worktree (e.g. `git worktree add /tmp/xr-cand <candidate>`),
-// review it in Hunk (as a merge..candidate diff), and then PROMOTE it by
-// fast-forwarding merge to it via a ref update — so what you verified is
-// byte-identical to what lands.
+// you intend to extract this cycle. You build-verify the candidate by checking
+// it out and running your build, then review it in Hunk (as a merge..candidate
+// diff), and then PROMOTE it by fast-forwarding merge to it via a ref update — so
+// what you verified is byte-identical to what lands.
 //
 // Promote is the only landing step: there is no separate extract step and no
 // throwaway-branch bookkeeping. Review is just the optional middle step.
@@ -24,7 +23,7 @@
 //       refs/heads/{candidate}. HEAD and working tree are NOT touched.
 //       The patch should live OUTSIDE the work tree (e.g. /tmp) so it never
 //       litters the repo. It must apply cleanly to the current -merge tip.
-//       Verify by extracting candidate into a temp worktree.
+//       Verify by checking out the candidate and running your build.
 //
 //   review
 //       Print the `hunk session reload` command that shows ONLY this candidate
@@ -152,10 +151,10 @@ function cmdSet(cfg: XrConfig): void {
     xrStatus(`candidate set onto-merge=${mergeSha}`);
     xrStatus("candidate set HEAD-untouched (plumbing-only)");
     xrInfo(
-      `Candidate built. Verify in an isolated worktree, e.g.:\n` +
-        `  git worktree add /tmp/xr-${cfg.candidate} ${cfg.candidate} && \\\n` +
-        `    cd /tmp/xr-${cfg.candidate} && <build/test command> && cd - && \\\n` +
-        `    git worktree remove /tmp/xr-${cfg.candidate}\n` +
+      `Candidate built. Verify by checking out the candidate and running your build, e.g.:\n` +
+        `  git checkout ${cfg.candidate}\n` +
+        `  <build/test command>\n` +
+        `  git checkout <your-working-branch>\n` +
         `Then 'candidate.ts review' to inspect in Hunk, or 'candidate.ts promote' to land it.`,
     );
   } finally {
