@@ -117,14 +117,24 @@ function cmdSet(cfg: XrConfig): void {
     if (check.status !== 0) {
       xrInfo(`patch does not apply cleanly to ${cfg.merge}:`);
       xrInfo(check.stderr || check.stdout);
-      xrDie("candidate set aborted: patch did not apply");
+      xrDie(
+        "candidate set aborted: patch did not apply. " +
+          "Likely causes: (a) reconcile drifted from merge — re-run `squash.ts` first; " +
+          "(b) patch contains reversions of already-landed cleanup — clean it on reconcile " +
+          "or hand-assemble an additive-only patch (Failure Mode 4 / 13)."
+      );
     }
 
     // Apply for real into the temp index.
     const apply = git(["apply", "--cached", patch], { env: { GIT_INDEX_FILE: tmpIndex } });
     if (apply.status !== 0) {
       xrInfo(apply.stderr || apply.stdout);
-      xrDie("git apply --cached failed");
+      xrDie(
+        "git apply --cached failed. " +
+          "If this follows a successful --check, the patch may touch binary files or " +
+          "have whitespace issues. Try `git apply --cached --ignore-space-change` " +
+          "or rebuild the patch from reconcile (Failure Mode 4)."
+      );
     }
 
     // Write the temp index out as a tree object.

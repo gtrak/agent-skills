@@ -198,6 +198,8 @@ Collapse proto's history into one clean commit on top of merge, on `-reconcile`:
 bun $SCRIPTS/squash.ts
 ```
 
+Run `bun $SCRIPTS/status.ts` to confirm the reconcile surface looks right.
+
 Afterward `merge..reconcile` is a single commit whose diff equals the full
 proto-vs-merge diff — the candidate extraction surface.
 
@@ -340,6 +342,23 @@ do NOT touch `-candidate`, fix only minimal wiring, and **report exactly what
 extra it pulled in beyond the originally-chosen files** — that report is the true
 unit boundary and flags when closure exceeded the heuristic.
 
+**Delegate build-close like this**:
+
+```text
+task subagent_type=general description="Build-close candidate on reconcile" prompt="
+**Branch to edit**: {NAME}/{FEATURE}-reconcile
+**Goal**: The candidate patch (applied to -merge) fails to build. Add the *minimal* wiring from `-reconcile` so it builds, without touching `-candidate`.
+
+**Rules**:
+1. Edit ONLY `-reconcile`. Do NOT touch `-candidate` or `-merge`.
+2. Fix only wiring: config fields, default values, one-line propagations, directly-attached tests.
+3. If the fix requires substantial logic (new method, new module, branching control flow), STOP and report what symbol fails and why.
+4. After fixing, run the project's build/test command on `-reconcile`.
+5. Report exactly what extra files/hunks you modified beyond the original candidate scope.
+
+DO NOT run git checkout/reset/stash. Work over the current working tree."
+```
+
 #### B2.6. Show the green candidate in Hunk
 
 Only once green, load the candidate:
@@ -354,7 +373,36 @@ land — a surface that equals what gets promoted. (Reloading a branch-diff also
 restores `--repo .` session selection, so subsequent `comment`/`navigate` calls
 work normally.)
 
+#### B2.7. Pre-promote validation (mandatory)
+
+Before promoting, review the **candidate diff** with a fresh `general` agent. This catches coherence and completeness problems *before* they land on `-merge`, avoiding expensive undo-and-redo.
+
+```text
+task subagent_type=general description="Pre-promote candidate review" prompt="
+**Diff to review**: {NAME}/{FEATURE}-merge...{NAME}/{FEATURE}-candidate
+
+**Task**:
+1. Coherence: Does the candidate stand alone? Any dangling references, imports of code not in the candidate, or half-extracted helpers?
+2. Completeness: Scan `merge..reconcile` (the full leftover). Did anything that obviously belongs to this unit get left behind?
+3. Build: The candidate already built in B2.5; confirm no red flags in the diff that would suggest a hidden build issue.
+
+Output:
+## Coherence: PASS / FAIL
+## Completeness: PASS / FAIL
+## Hidden Build Risk: PASS / FLAG
+
+DO NOT modify anything. If FAIL on (1) or (2), report exactly what is wrong so the supervisor can fix it on `-reconcile` and rebuild the candidate."
+```
+
+If validation fails, fix on `-reconcile`, regenerate the patch, re-run `candidate.ts set`, and repeat B2.5 → B2.7.
+
 #### B3. Iterate, then promote
+
+**Pre-promote checklist** (all must pass):
+
+- [ ] Candidate builds and tests pass on `-merge` (B2.5).
+- [ ] `general` pre-promote review passed (B2.7).
+- [ ] User reviewed candidate diff in Hunk (B2.6), or unit is trivial (Option A).
 
 - Rework requested: refactor on `-reconcile`, regenerate the patch, re-run
   `candidate.ts set` (it hard-resets and rebuilds the candidate), re-verify, and
@@ -456,69 +504,38 @@ out; only the leftover remains. If the leftover is empty (extraction consumed th
 entire delta), the script reports `rebase empty` and reconcile sits at merge —
 exploration is fully integrated.
 
-## Phase 7: Validate (delegate to `general`)
+Run `bun $SCRIPTS/status.ts` to confirm the leftover shrank.
 
-The **mandatory delegation point**. After every extract+rebase, hand the result
-to a fresh `general` for independent review:
+## Phase 7: Sanity-Check Rebase
+
+After `rebase.ts`, confirm the extraction dropped out cleanly:
+
+```bash
+bun $SCRIPTS/status.ts   # quick diffstat sanity check
+```
+
+Then delegate to `general` for a lightweight read-only pass:
 
 ```text
-task subagent_type=general description="Validate {FEATURE} extraction cycle N" prompt="
+task subagent_type=general description="Sanity-check rebase and suggest next unit" prompt="
 **Branches**: {NAME}/{FEATURE}-{merge,proto,reconcile}
 
-**What just happened**:
-- Identified unit: <unit description>
-- Extracted patch: <patch path or summary>
-- Build verification on -merge: <pass/fail with command and output>
+**Task**:
+1. Read `merge..reconcile` diffstat. Is it smaller than before extraction?
+2. Scan `merge..reconcile` for obvious half-states (calls to deleted functions, imports of unmerged modules). Flag any.
+3. Propose the next 1-2 stable extraction units.
 
-**Your task — answer all four**:
-
-1. Is `-merge` coherent?
-   - Read the new commit on -merge. Does it stand alone? Any dangling
-     references, half-extracted helpers, or imports of code that did not come
-     along?
-   - Run the project's build/test command on -merge and report the result.
-
-2. Is the unit complete?
-   - Read the squashed reconcile diff before extraction (git show on the prior
-     reconcile tip, recorded in the XR: status line from squash) and compare to
-     what landed on merge. Did anything that obviously belongs to this unit get
-     left behind on -reconcile?
-
-3. Is the leftover diff (`merge..reconcile`) consistent?
-   - Should it still build conceptually (no obvious half-states like 'calls a
-     function that no longer exists')?
-   - Is it smaller than before? By how much?
-
-4. What is the next stable unit?
-   - Based on the new leftover, propose the next 1-2 extraction candidates.
-
-**Output format**:
-
-## Merge Coherence: PASS / FAIL
+Output:
+## Rebase Sanity: OK / FLAG
 [evidence]
-
-## Unit Completeness: PASS / FAIL
-[evidence]
-
-## Leftover Consistency: PASS / FAIL
-[evidence and rough size]
-
 ## Next Candidates
 1. ...
 2. ...
 
-DO NOT modify any branch. Read-only validation."
+DO NOT modify anything. Read-only."
 ```
 
-If validation fails on (1) or (2), undo the cycle:
-
-```bash
-git checkout {NAME}/{FEATURE}-merge && git reset --hard HEAD^
-bun $SCRIPTS/squash.ts   # rebuild reconcile from proto
-```
-
-(3) failures are not necessarily blocking — a "wobbly" leftover is normal
-mid-refactor; note it for the next cycle.
+A "wobbly" leftover is normal mid-refactor; flags here are notes for the next cycle, not blockers. If the leftover is empty (`rebase empty`), skip this and start a new exploration cycle.
 
 ## Phase 8: Iterate
 
@@ -528,6 +545,8 @@ record, snapshot it onto `-proto`:
 ```bash
 bun $SCRIPTS/iterate.ts
 ```
+
+Run `bun $SCRIPTS/status.ts` to confirm proto caught up with reconcile.
 
 This appends one commit to `-proto` whose tree equals the current reconcile tip.
 Proto stays append-only. Then loop back to Phase 2 for the next cycle.
